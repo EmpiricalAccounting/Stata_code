@@ -1,0 +1,78 @@
+/*********************************
+ 第12章 IFRS適用の決定要因分析 Stata版
+**********************************/
+// 作業ディレクトリ（CSVデータを保存したフォルダのパス）を指定
+cd "C:\***************\Data_Setvfin\Data_Set"
+
+/// データの読み込み
+import delimited ch12_determinant_analysis.csv, clear
+
+/// 読み込んだデータの確認
+// データ型などの確認
+describe
+// 欠損値やunique valueの数、カテゴリなどの確認
+codebook
+// データ全体の一覧表示
+br
+
+/// IFRS適用企業と日本基準適用企業の観測値の数
+// 「m」オプションをつけると、欠損値があった場合その数も表示される
+tab accounting_standard, m
+
+/// 変数の計算
+// 条件に当てはまれば1、そうでなければ0のダミー変数をつくる
+gen ifrs = (accounting_standard == "IFRS")
+gen ratio_goodwill = goodwill / total_assets
+gen ratio_rd = research_development / sales
+gen ratio_foreign_sales = foreign_sales / sales
+gen ratio_foreign_shares = foreign_ownership * shares_unit / shares_outstanding
+// 自然対数への変換
+gen size = ln(total_assets)
+gen leverage = liabilities / total_assets
+gen roa = earnings / total_assets
+
+// 全変数の記述統計量の表示（string変数の場合はobservationsが0と表示される）
+sum
+// tabstatコマンドを使うと、「stat」オプションで指定した要約統計量をテーブル形式で表示できる
+tabstat firm_id year total_assets sales shares_outstanding goodwill research_development foreign_sales foreign_ownership shares_unit liabilities earnings ifrs ratio_goodwill ratio_rd ratio_foreign_sales ratio_foreign_shares size leverage roa, stat(min p25 p50 mean p75 max)
+
+/// IFRSと日本基準の平均値の差の検定
+/* stataのttestコマンドのデフォルトはequal variances
+ welchのttestをしたい場合は、オプションで「welch」を指定 */
+// のれん
+ttest ratio_goodwill, by(ifrs) welch
+
+// 研究開発費
+ttest ratio_rd, by(ifrs) welch
+
+// 海外売上高比率
+ttest ratio_foreign_sales, by(ifrs) welch
+
+// 外国人持株比率
+ttest ratio_foreign_shares, by(ifrs) welch
+
+// 企業規模
+ttest size, by(ifrs) welch
+
+// レバレッジ
+ttest leverage, by(ifrs) welch
+
+// ROA
+ttest roa, by(ifrs) welch
+
+/* ループ関数でまとめて変数を指定してもよい */
+foreach x of varlist ratio_goodwill ratio_rd ratio_foreign_sales ratio_foreign_shares size leverage roa{
+	ttest `x', by(ifrs) welch
+	}
+
+// estoutパッケージのインストール（未インストールの人のみ）
+ssc install estout
+	
+// ロジット分析の実施
+logit ifrs ratio_goodwill ratio_rd ratio_foreign_sales ratio_foreign_shares size leverage roa
+
+// 推定結果の保存
+est store m1
+
+// 推定結果を表形式で表示
+esttab m1, star(* 0.10 ** 0.05 *** 0.01) stats(N, labels("Num.Obs"))
