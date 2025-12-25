@@ -1,0 +1,92 @@
+/********************************************
+ 第10章 キャッシュ・フロー計算書を用いた重回帰分析 Stata版
+*********************************************/
+// 作業ディレクトリ（CSVデータを保存したフォルダのパス）を指定
+cd "C:\***************\Data_Setvfin\Data_Set"
+
+/// データの読み込み
+import delimited ch10_fundamental_analysis, clear
+
+/// 読み込んだデータの確認
+// データ型などの確認
+describe
+// 欠損値やunique valueの数、カテゴリなどの確認
+codebook
+// データ全体の一覧表示
+br
+
+/// 企業のライフサイクルステージを判定する
+sum ocf icf fcf
+/* 順序のあるカテゴリ変数とするため、数値で変数を作った上で名称をラベルとしてつける */
+gen lifecycle = 1 if ocf < 0 & icf < 0 & fcf > 0
+replace lifecycle = 2 if ocf > 0 & icf < 0 & fcf > 0
+replace lifecycle = 3 if ocf > 0 & icf < 0 & fcf < 0
+replace lifecycle = 5 if ocf <0 & icf > 0
+// 上記のどれにも当てはまらない（lifecycleの値が欠損）のものはshakeoutにする
+replace lifecycle = 4 if lifecycle == . 
+// ラベルを設定して付与する
+label define life 1 "intro" 2 "growth" 3 "mature" 4 "shakeout" 5 "decline"
+label values lifecycle life
+// それぞれのライフサイクルでの観測値の数をカウント
+tab lifecycle, m
+
+/// 変数の計算
+// 時系列のパネル構造の宣言
+xtset firm_id year
+// ラグやデルタ、リードの元になる変数をつくる
+gen roa = operating_income / total_assets
+gen asset_turnover = sales / total_assets
+gen profit_margin = operating_income / sales
+// ラグをつくる
+gen roa_lag1 = L.roa
+gen total_assets_lag1 = L.total_assets
+gen asset_turnover_lag1 = L.asset_turnover
+gen profit_margin_lag1 = L.profit_margin
+/************************************************
+firm_id==78のように、途中の年度のデータが飛んでいる場合、
+Rのlagコマンドと挙動が変わるので注意
+例えば、firm_id==78は2009年の次のデータが2011年になっていて、
+2010年のデータは含まれていない。
+このときRでつくったラグは、2011年のセルに2009年の数値が入るが、
+stataでつくったラグやデルタは2011年のセルは欠損値になる。
+そのため、要約統計量をみると欠損値の数や平均値がRとstataで異なる。
+*************************************************/
+// デルタをつくる
+gen delta_roa = roa - roa_lag1
+gen delta_assets = (total_assets - total_assets_lag1) / total_assets_lag1
+gen delta_asset_turnover = asset_turnover - asset_turnover_lag1
+gen delta_profit_margin = profit_margin - profit_margin_lag1
+// リードをつくる
+gen lead_1_delta_roa = F.delta_roa
+gen lead_2_delta_roa = F2.delta_roa
+
+/* ライフサイクルステージのダミー変数の作成、firm_idやyearの因子型への変更は不要 */
+
+// 記述統計量の確認
+sum
+
+/// 重回帰分析
+// estoutパッケージのインストール（未インストールの人のみ）
+ssc install estout
+
+// 従属変数：1期先のROA
+/******************************************************
+因子型として扱いたい変数は、変数名の前に「i.」をつける
+デフォルトでは基準カテゴリは1だが、lifecycleでは3（mature）を基準にしたい。
+そのときは、「i」と「.」の間に「b*」をつける。*には基準にしたいカテゴリの番号を記述
+つまり、i.lifecycleと回帰式に書くと1（intro）が基準になるが、
+ib3.lifecycleと書くと3（mature）が基準になる。
+*******************************************************/
+reg lead_1_delta_roa roa delta_roa delta_assets delta_asset_turnover delta_profit_margin ib3.lifecycle i.year
+
+// 推定結果の保存
+est store model_lead_1
+
+// 従属変数：2期先のROA
+reg lead_2_delta_roa roa delta_roa delta_assets delta_asset_turnover delta_profit_margin ib3.lifecycle i.year
+
+// 推定結果の保存
+est store model_lead_2
+
+// estoutによる結果の表示
+esttab model_lead_1 model_lead_2, star(* 0.10 ** 0.05 *** 0.01) stats(N ar2, labels("nobs" "adj.r.squared"))
